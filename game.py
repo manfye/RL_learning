@@ -76,9 +76,10 @@ class SnakeGameAI:
         # 3. check if game over
         reward = 0
         game_over = False
+        # die or do ntg for x steps
         if self.is_collision() or self.frame_iteration > 100*len(self.snake):
             game_over = True
-            reward = -10
+            reward = -20
             return reward, game_over, self.score
 
         # 4. place new food or just move
