@@ -4,7 +4,7 @@ import time
 import numpy as np
 import ale_py
 gym.register_envs(ale_py)
-
+# https://gymnasium.farama.org/environments/toy_text/frozen_lake/
 # env = gym.make('ALE/Breakout-v5')
 # obs, info = env.reset()
 # obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
