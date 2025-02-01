@@ -127,7 +127,7 @@ fig.canvas.draw()
 
 NUM_BINS = 10
 BINS = create_bins(NUM_BINS)  # Create the bins used for the rest of the notebook
-
+#shape = number of bins for each observation (now is 4 x observation)  * number of actions
 q_table_shape = (NUM_BINS, NUM_BINS, NUM_BINS, NUM_BINS, env.action_space.n)
 q_table = np.zeros(q_table_shape)
 print(q_table.shape)
