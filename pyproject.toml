@@ -11,5 +11,6 @@ dependencies = [
     "matplotlib>=3.7.5",
     "numpy>=1.26.4",
     "pygame>=2.6.1",
+    "tensorflow>=2.18.0",
     "torch>=2.5.1",
 ]
