@@ -13,6 +13,9 @@ import tensorflow as tf
 from keras import layers
 from keras import models
 from keras import optimizers
+import os 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppresses warnings and info
+tf.get_logger().setLevel('ERROR')  # Suppresses additional TensorFlow logs
 
 gym.register_envs(ale_py)
 
@@ -78,29 +81,32 @@ def replay(replay_buffer, batch_size, model, target_model):
     zipped_samples = list(zip(*samples))  
     states, actions, rewards, new_states, dones = zipped_samples  # S,A,R,S',D
     
-    # Predict targets for all states from the sample
-    targets = target_model.predict(np.array(states))
+    states_array = np.array(states).squeeze(axis=1)  # converts shape (batch_size, 1, 4) -> (batch_size, 4)
+    new_states_array = np.array(new_states).squeeze(axis=1)
     
-    # Predict Q-Values for all new states from the sample
-    q_values = model.predict(np.array(new_states))  
+    # Predict targets for all states from the sample using the target model
+    targets = target_model.predict(states_array)
+    
+    # Predict Q-Values for all new states from the sample using the main model
+    q_values = model.predict(new_states_array)  
     
     # Now we loop over all predicted values to compute the actual targets
     for i in range(batch_size):  
         
         # Take the maximum Q-Value for each sample
-        q_value = max(q_values[i][0])  
+        # print(q_values)
+        q_value = np.max(q_values[i])        
         
         # Store the ith target in order to update it according to the formula
         target = targets[i].copy()  
         if dones[i]:
-            target[0][actions[i]] = rewards[i]
+            target[actions[i]] = rewards[i]
         else:
-            target[0][actions[i]] = rewards[i] + q_value * GAMMA
+            target[actions[i]] = rewards[i] + q_value * GAMMA
         target_batch.append(target)
 
     # Fit the model based on the states and the updated targets for 1 epoch
-    model.fit(np.array(states), np.array(target_batch), epochs=1, verbose=0)  
-
+    model.fit(states_array, np.array(target_batch), epochs=1, verbose=0)
 
 def update_model_handler(epoch, update_target_model, model, target_model):
     if epoch > 0 and epoch % update_target_model == 0:
@@ -110,6 +116,18 @@ def update_model_handler(epoch, update_target_model, model, target_model):
 
 model.compile(optimizer=optimizers.Adam(learning_rate=LEARNING_RATE), loss='mse')
 
+scores = []
+avg_scores = []
+moving_avg_window = 25
+
+# Set up interactive plotting
+plt.ion()
+fig, ax = plt.subplots()
+line1, = ax.plot([], [], label="Episode Score")
+line2, = ax.plot([], [], label="Running Average")
+ax.set_xlabel("Episode")
+ax.set_ylabel("Score")
+ax.legend()
 
 best_so_far = 0
 for epoch in range(EPOCHS):
@@ -140,9 +158,29 @@ for epoch in range(EPOCHS):
     
     # Check if we need to update the target model
     update_model_handler(epoch, update_target_model, model, target_model)
-    
+    scores.append(points)
+
+    # Compute running average over the last moving_avg_window episodes
+    if len(scores) < moving_avg_window:
+        avg_scores.append(np.mean(scores))
+    else:
+        avg_scores.append(np.mean(scores[-moving_avg_window:]))
+
     if points > best_so_far:
         best_so_far = points
     if epoch %25 == 0:
         print(f"{epoch}: Points reached: {points} - epsilon: {epsilon} - Best: {best_so_far}")
 
+ # Update plot every episode
+    line1.set_xdata(np.arange(len(scores)))
+    line1.set_ydata(scores)
+    line2.set_xdata(np.arange(len(avg_scores)))
+    line2.set_ydata(avg_scores)
+    ax.relim()
+    ax.autoscale_view()
+    plt.draw()
+    plt.pause(0.01)
+
+# Finalize the plot
+plt.ioff()
+plt.show()
