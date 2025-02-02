@@ -25,12 +25,12 @@ GAMMA = 0.99
 LEARNING_RATE = 1e-4
 TARGET_UPDATE_FREQ = 1000  # update target network every 1000 steps
 MEMORY_SIZE = 100000
-NUM_EPISODES = 15000
+NUM_EPISODES = 5000
 EPS_START = 1.0
 EPS_END = 0.1
 EPS_DECAY = 1000000  # decay over 1M frames
 TRAIN_START = 50000  # start training after 50k frames
-MAX_FRAMES = 5000000  # total frames to train
+MAX_FRAMES = 50000000  # total frames to train
 
 # Preprocessing parameters
 INPUT_WIDTH = 84
