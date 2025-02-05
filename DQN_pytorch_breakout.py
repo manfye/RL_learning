@@ -28,8 +28,8 @@ MEMORY_SIZE = 100000
 NUM_EPISODES = 50000
 EPS_START = 1.0
 EPS_END = 0.1
-EPS_DECAY = 1000000  # decay over 1M frames
-TRAIN_START = 50000  # start training after 50k frames
+EPS_DECAY = 2000000  # decay over 1M frames
+TRAIN_START = 20000  # start training after 20000 frames
 MAX_FRAMES = 50000000  # total frames to train
 
 # Preprocessing parameters
@@ -51,17 +51,36 @@ class ReplayMemory:
     
     def __len__(self):
         return len(self.memory)
+    
+class FrameStacker:
+    def __init__(self, k):
+        self.k = k
+        self.frames = deque(maxlen=k)
+    
+    def reset(self, initial_frame):
+        processed = preprocess_frame(initial_frame)
+        for _ in range(self.k):
+            self.frames.append(processed)
+        return self.get_stacked_frames()
+    
+    def step(self, frame):
+        processed = preprocess_frame(frame)
+        self.frames.append(processed)
+        return self.get_stacked_frames()
+    
+    def get_stacked_frames(self):
+        return np.concatenate(list(self.frames), axis=0)
 
 # The DQN network architecture – adapted for RGB input.
 class DQN(nn.Module):
-    def __init__(self, num_actions):
+    def __init__(self, num_actions, input_channels=12):  # 4 frames * 3 channels
         super(DQN, self).__init__()
         self.net = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=8, stride=4),  # output: (32, ~20, ~20)
+            nn.Conv2d(input_channels, 32, kernel_size=8, stride=4),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2), # output: (64, ~9, ~9)
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=1), # output: (64, ~7, ~7)
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(64 * 7 * 7, 512),
@@ -95,8 +114,8 @@ def main():
     print(f"Number of actions: {num_actions}")
     
     # Initialize networks
-    policy_net = DQN(num_actions).to(device)
-    target_net = DQN(num_actions).to(device)
+    policy_net = DQN(num_actions, input_channels=12).to(device)
+    target_net = DQN(num_actions, input_channels=12).to(device)
     target_net.load_state_dict(policy_net.state_dict())
     target_net.eval()
 
@@ -105,29 +124,47 @@ def main():
 
     steps_done = 0
     episode_rewards = []
+    episode_losses = []  # To store the average loss per episode
     frame_count = 0
 
-    # Set up interactive plotting.
-    plt.ion()  # turn on interactive mode
-    fig, ax = plt.subplots(figsize=(12, 6))
-    reward_line, = ax.plot([], [], label="Reward per Episode")
-    avg_line, = ax.plot([], [], label="Running Average (window=50)", color="orange")
-    ax.set_xlabel("Episode")
-    ax.set_ylabel("Reward")
-    ax.set_title("Training Performance")
-    ax.legend()
-    ax.grid()
+    # Set up interactive plotting with two subplots: rewards and loss.
+    plt.ion()  # Turn on interactive mode
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    
+    # Reward plot (top)
+    reward_line, = ax1.plot([], [], label="Reward per Episode")
+    avg_line, = ax1.plot([], [], label="Running Average (window=50)", color="orange")
+    ax1.set_xlabel("Episode")
+    ax1.set_ylabel("Reward")
+    ax1.set_title("Training Performance: Rewards")
+    ax1.legend()
+    ax1.grid()
+    
+    # Loss plot (bottom)
+    loss_line, = ax2.plot([], [], label="Avg Loss per Episode", color="red")
+    ax2.set_xlabel("Episode")
+    ax2.set_ylabel("Loss")
+    ax2.set_title("Training Performance: Loss")
+    ax2.legend()
+    ax2.grid()
     
     window = 50  # window size for running average
 
     def update_plot():
         episodes = np.arange(1, len(episode_rewards) + 1)
+        # Update reward subplot
         reward_line.set_data(episodes, episode_rewards)
         if len(episode_rewards) >= window:
             running_avg = np.convolve(episode_rewards, np.ones(window)/window, mode='valid')
             avg_line.set_data(np.arange(window, len(episode_rewards)+1), running_avg)
-        ax.relim()
-        ax.autoscale_view()
+        ax1.relim()
+        ax1.autoscale_view()
+        
+        # Update loss subplot
+        loss_line.set_data(episodes, episode_losses)
+        ax2.relim()
+        ax2.autoscale_view()
+        
         fig.canvas.draw()
         fig.canvas.flush_events()
 
@@ -141,11 +178,14 @@ def main():
             return random.randrange(num_actions)
 
     for i_episode in range(1, NUM_EPISODES + 1):
-        state, _ = env.reset()
-        state = preprocess_frame(state)
-        state = torch.from_numpy(state).unsqueeze(0)  # remain on CPU
-
+        raw_state, _ = env.reset()
+        stacker = FrameStacker(k=4)
+        state = stacker.reset(raw_state)
+        state = torch.from_numpy(state).unsqueeze(0)  # shape: (1, 12, 84, 84)
+     
         episode_reward = 0
+        # For tracking the losses within this episode
+        losses_in_episode = []
         done = False
 
         while not done:
@@ -159,8 +199,8 @@ def main():
             steps_done += 1
 
             if not done:
-                next_state = preprocess_frame(next_obs)
-                next_state = torch.from_numpy(next_state).unsqueeze(0)
+                next_stacked = stacker.step(next_obs)
+                next_state = torch.from_numpy(next_stacked).unsqueeze(0)
             else:
                 next_state = None
 
@@ -169,6 +209,7 @@ def main():
             if next_state is not None:
                 state = next_state
 
+            # Only train if we've reached the training start threshold and every 4 frames
             if len(memory) > TRAIN_START and frame_count % 4 == 0:
                 transitions = memory.sample(BATCH_SIZE)
                 batch = Transition(*zip(*transitions))
@@ -195,6 +236,7 @@ def main():
                 expected_state_action_values = (next_state_values * GAMMA) + reward_batch
 
                 loss = nn.functional.smooth_l1_loss(state_action_values.squeeze(), expected_state_action_values)
+                losses_in_episode.append(loss.item())
 
                 optimizer.zero_grad()
                 loss.backward()
@@ -204,15 +246,18 @@ def main():
                 optimizer.step()
 
                 if steps_done % TARGET_UPDATE_FREQ == 0:
-
                     target_net.load_state_dict(policy_net.state_dict())
 
             if frame_count >= MAX_FRAMES:
                 break
 
         episode_rewards.append(episode_reward)
-        print(f"Episode {i_episode} - Reward: {episode_reward} - Epsilon: {eps_threshold:.4f} - Total Steps: {steps_done}")
-        update_plot()  # update the plot after each episode
+        # If we recorded any loss values during this episode, take the average; otherwise, set to None or 0.
+        avg_loss = np.mean(losses_in_episode) if losses_in_episode else 0
+        episode_losses.append(avg_loss)
+
+        print(f"Episode {i_episode} - Reward: {episode_reward} - Avg Loss: {avg_loss:.4f} - Epsilon: {eps_threshold:.4f} - Total Steps: {steps_done}")
+        update_plot()  # update the plots after each episode
 
         if frame_count >= MAX_FRAMES:
             print("Reached maximum training frames.")
