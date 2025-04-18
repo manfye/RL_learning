@@ -79,7 +79,7 @@ class Agent(threading.Thread):
                 next_observe = observe
 
             state = pre_processing(next_observe, observe)
-            history = np.stack([state] * 4, axis=0)
+            history = np.stack([state] * 4, axis=0) 
             history = np.expand_dims(history, axis=0)  # shape: (1, 4, 84, 84)
             history = torch.tensor(history, dtype=torch.float32).to(device)
             done, score, t = False, 0, 0
